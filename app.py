@@ -4,44 +4,48 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 
-# loading the pretrained model and the primary scaler
+# --- 1. Load Model and Scaler ---
 try:
     model = joblib.load('random_forest_model.joblib')
     scaler = joblib.load('scaler.joblib')
+    print("✅ Model and Scaler loaded successfully.")
 except FileNotFoundError:
     model, scaler = None, None
-    print("WARNING: Model or scaler files not found. The app will not work until a CSV is uploaded and a model is 'trained'.")
+    print("WARNING: Model/scaler files not found. The app will not work until files are present.")
 
-
-# core prediction function
-# takes the input values and returns the model's prediction.
+# --- 2. Core Prediction Function (Simplified) ---
+# Takes the input values and the threshold, and returns the prediction text.
 def predict_fraud(*args):
-    # using gradio here
+    # The last argument from args will be the threshold slider value
+    threshold = args[-1]
+    feature_args = args[:-1]
+
     if model is None or scaler is None:
         return "Model not loaded. Please ensure model and scaler files are present."
-        
-    feature_names = ['Time', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10', 
-                     'V11', 'V12', 'V13', 'V14', 'V15', 'V16', 'V17', 'V18', 'V19', 'V20', 
+
+    feature_names = ['Time', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10',
+                     'V11', 'V12', 'V13', 'V14', 'V15', 'V16', 'V17', 'V18', 'V19', 'V20',
                      'V21', 'V22', 'V23', 'V24', 'V25', 'V26', 'V27', 'V28', 'Amount']
-    
-    input_values = dict(zip(feature_names, args))
 
-    input_data = pd.DataFrame([input_values])
+    input_data = pd.DataFrame([dict(zip(feature_names, feature_args))])
 
-    input_data['Amount'] = scaler.transform(input_data[['Amount']])
-    input_data['Time'] = scaler.transform(input_data[['Time']])
-    
-    # making the prediciton
-    prediction = model.predict(input_data)[0]
-    
+    # --- Preprocessing ---
+    input_data_scaled = input_data.copy()
+    input_data_scaled['Amount'] = scaler.transform(input_data[['Amount']].values)
+    input_data_scaled['Time'] = scaler.transform(input_data[['Time']].values)
+
+    # --- Prediction with Probability ---
+    probability_fraud = model.predict_proba(input_data_scaled)[0][1]
+    prediction = 1 if probability_fraud >= threshold else 0
+
     if prediction == 1:
-        return "🚨 Prediction: FRAUDULENT TRANSACTION"
+        prediction_text = f"🚨 Prediction: FRAUDULENT\n(Probability: {probability_fraud:.2%}, Threshold: {threshold:.2%})"
     else:
-        return "✅ Prediction: Legitimate Transaction"
+        prediction_text = f"✅ Prediction: Legitimate\n(Probability: {probability_fraud:.2%}, Threshold: {threshold:.2%})"
 
+    return prediction_text
 
-# util functions
-
+# --- Utility functions (Unchanged) ---
 def process_file(file):
     if file is not None:
         try:
@@ -53,10 +57,9 @@ def process_file(file):
             return None
     return None
 
-# func to generate random test data.
 def get_random_sample(df, fraud_class):
     if df is None:
-        return [0] * 31
+        return [0] * 30 + ["Please upload the CSV first."]
     
     sample_df = df[df['Class'] == fraud_class]
     if not sample_df.empty:
@@ -67,15 +70,15 @@ def get_random_sample(df, fraud_class):
     else:
         return [0] * 30 + [f"No samples of class {fraud_class} found in the uploaded file."]
 
-
+# --- 3. Gradio UI (Simplified) ---
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
     stored_df = gr.State()
 
-    gr.Markdown("# 💳 Enhanced Credit Card Fraud Detection Demo")
-    gr.Markdown("Upload the `creditcard.csv` file, then click the buttons to fetch a random transaction and test the model's prediction.")
+    gr.Markdown("# 💳 Credit Card Fraud Detection Demo")
+    gr.Markdown("This demo uses a pre-trained Random Forest model. Use the slider to adjust the prediction sensitivity.")
 
     with gr.Row():
-        file_upload = gr.File(label="Upload creditcard.csv", file_types=[".csv"])
+        file_upload = gr.File(label="Upload creditcard.csv (Required for 'Get Random' buttons)", file_types=[".csv"])
 
     with gr.Row():
         get_legit_button = gr.Button("Get Random Legitimate Transaction", variant="secondary")
@@ -102,11 +105,17 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                 gr.Number(label="Amount", interactive=True)
             ]
         with gr.Column(scale=1):
+            with gr.Row():
+                threshold_slider = gr.Slider(
+                    minimum=0.01, maximum=0.99, step=0.01, value=0.5,
+                    label="Prediction Threshold",
+                    info="Adjust the sensitivity. A lower threshold flags more transactions as fraud."
+                )
             predict_button = gr.Button("Flag Transaction", variant="primary")
             expected_output = gr.Textbox(label="Expected Outcome")
-            model_output = gr.Textbox(label="Model Prediction")
-
-
+            model_output = gr.Textbox(label="Model Prediction", lines=2)
+    
+    # Event Handlers
     file_upload.upload(fn=process_file, inputs=file_upload, outputs=stored_df)
 
     get_legit_button.click(
@@ -123,7 +132,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
 
     predict_button.click(
         fn=predict_fraud,
-        inputs=feature_inputs,
+        inputs=feature_inputs + [threshold_slider],
         outputs=model_output
     )
 
