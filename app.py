@@ -13,37 +13,60 @@ except FileNotFoundError:
     model, scaler = None, None
     print("WARNING: Model/scaler files not found. The app will not work until files are present.")
 
-# --- 2. Core Prediction Function (Simplified) ---
-# Takes the input values and the threshold, and returns the prediction text.
-def predict_fraud(*args):
-    # The last argument from args will be the threshold slider value
+# --- 2. Core Prediction and Analysis Function ---
+def predict_fraud_with_cost_analysis(*args):
+    # Unpack all arguments
+    cost_fp = args[-2]
     threshold = args[-1]
-    feature_args = args[:-1]
+    feature_args = args[:-2]
 
     if model is None or scaler is None:
-        return "Model not loaded. Please ensure model and scaler files are present."
+        return "Model not loaded.", ""
 
     feature_names = ['Time', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10',
                      'V11', 'V12', 'V13', 'V14', 'V15', 'V16', 'V17', 'V18', 'V19', 'V20',
                      'V21', 'V22', 'V23', 'V24', 'V25', 'V26', 'V27', 'V28', 'Amount']
-
-    input_data = pd.DataFrame([dict(zip(feature_names, feature_args))])
+    
+    input_dict = dict(zip(feature_names, feature_args))
+    input_data = pd.DataFrame([input_dict])
+    
+    transaction_amount = input_dict['Amount'] # Get original amount for cost analysis
 
     # --- Preprocessing ---
     input_data_scaled = input_data.copy()
     input_data_scaled['Amount'] = scaler.transform(input_data[['Amount']].values)
     input_data_scaled['Time'] = scaler.transform(input_data[['Time']].values)
 
-    # --- Prediction with Probability ---
+    # --- Prediction based on Threshold ---
     probability_fraud = model.predict_proba(input_data_scaled)[0][1]
     prediction = 1 if probability_fraud >= threshold else 0
 
     if prediction == 1:
-        prediction_text = f"🚨 Prediction: FRAUDULENT\n(Probability: {probability_fraud:.2%}, Threshold: {threshold:.2%})"
+        prediction_text = f"🚨 **Prediction: FRAUDULENT**\n(Probability: {probability_fraud:.2%}, Threshold: {threshold:.2%})"
     else:
-        prediction_text = f"✅ Prediction: Legitimate\n(Probability: {probability_fraud:.2%}, Threshold: {threshold:.2%})"
+        prediction_text = f"✅ **Prediction: Legitimate**\n(Probability: {probability_fraud:.2%}, Threshold: {threshold:.2%})"
 
-    return prediction_text
+    # --- UNIQUE FEATURE: Cost-Benefit Analysis ---
+    prob_legit = 1 - probability_fraud
+    cost_of_flagging = prob_legit * cost_fp
+    cost_of_not_flagging = probability_fraud * transaction_amount
+
+    recommendation = "Flag Transaction" if cost_of_flagging < cost_of_not_flagging else "Do Not Flag"
+    
+    analysis_text = f"""
+    ### 💸 Cost-Benefit Analysis:
+    * **Cost of False Positive (Review):** ${cost_fp:,.2f}
+    * **Cost of False Negative (Transaction Amount):** ${transaction_amount:,.2f}
+    ---
+    * **Expected Cost of FLAGGING:**
+        `(P(Legit) * Cost_FP)` = `{prob_legit:.2%} * ${cost_fp:,.2f} = **${cost_of_flagging:,.2f}**`
+    * **Expected Cost of NOT FLAGGING:**
+        `(P(Fraud) * Txn_Amount)` = `{probability_fraud:.2%} * ${transaction_amount:,.2f} = **${cost_of_not_flagging:,.2f}**`
+    ---
+    ### **Recommendation: {recommendation}**
+    """
+    
+    return prediction_text, analysis_text
 
 # --- Utility functions (Unchanged) ---
 def process_file(file):
@@ -70,12 +93,12 @@ def get_random_sample(df, fraud_class):
     else:
         return [0] * 30 + [f"No samples of class {fraud_class} found in the uploaded file."]
 
-# --- 3. Gradio UI (Simplified) ---
+# --- 3. Gradio UI with Cost Analysis ---
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
     stored_df = gr.State()
 
-    gr.Markdown("# 💳 Credit Card Fraud Detection Demo")
-    gr.Markdown("This demo uses a pre-trained Random Forest model. Use the slider to adjust the prediction sensitivity.")
+    gr.Markdown("# 💳 Fraud Detection as a Decision-Support Tool")
+    gr.Markdown("This demo includes **Interactive Cost-Benefit Analysis** to recommend the most financially sound action.")
 
     with gr.Row():
         file_upload = gr.File(label="Upload creditcard.csv (Required for 'Get Random' buttons)", file_types=[".csv"])
@@ -105,16 +128,20 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                 gr.Number(label="Amount", interactive=True)
             ]
         with gr.Column(scale=1):
-            with gr.Row():
-                threshold_slider = gr.Slider(
-                    minimum=0.01, maximum=0.99, step=0.01, value=0.5,
-                    label="Prediction Threshold",
-                    info="Adjust the sensitivity. A lower threshold flags more transactions as fraud."
-                )
-            predict_button = gr.Button("Flag Transaction", variant="primary")
+            cost_fp_input = gr.Number(label="Cost of a False Positive ($)", value=5, info="Cost to investigate a wrongly flagged transaction.")
+            
+            threshold_slider = gr.Slider(
+                minimum=0.01, maximum=0.99, step=0.01, value=0.5,
+                label="Prediction Threshold",
+                info="Adjust the sensitivity. Lower threshold = more fraud flags."
+            )
+            predict_button = gr.Button("Analyze Transaction", variant="primary")
             expected_output = gr.Textbox(label="Expected Outcome")
-            model_output = gr.Textbox(label="Model Prediction", lines=2)
-    
+
+            # --- THE FIX IS HERE: Outputs are now inside the right-hand column ---
+            model_output = gr.Markdown(label="Model Prediction")
+            analysis_output = gr.Markdown(label="Cost-Benefit Analysis")
+
     # Event Handlers
     file_upload.upload(fn=process_file, inputs=file_upload, outputs=stored_df)
 
@@ -131,9 +158,9 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     )
 
     predict_button.click(
-        fn=predict_fraud,
-        inputs=feature_inputs + [threshold_slider],
-        outputs=model_output
+        fn=predict_fraud_with_cost_analysis,
+        inputs=feature_inputs + [cost_fp_input, threshold_slider],
+        outputs=[model_output, analysis_output]
     )
 
 if __name__ == "__main__":
