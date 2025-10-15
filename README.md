@@ -1,5 +1,8 @@
 # 💳 Credit Card Fraud Detection & Decision Support Tool
 
+Nagula Anish - PES2UG23CS358
+Muskan Goenka - PES2UG23CS355
+
 This project uses a machine learning model to detect fraudulent credit card transactions and presents the results in an interactive web interface built with Gradio.
 
 Beyond simple classification, this application is designed as a decision-support tool. It incorporates a unique Cost-Benefit Analysis feature that recommends the most financially sound action (to flag or not flag a transaction) based on the potential costs associated with fraud and false positives.
