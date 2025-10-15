@@ -4,6 +4,11 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 
+# --- Define feature names in a global scope for reuse ---
+FEATURE_NAMES = ['Time', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10',
+                 'V11', 'V12', 'V13', 'V14', 'V15', 'V16', 'V17', 'V18', 'V19', 'V20',
+                 'V21', 'V22', 'V23', 'V24', 'V25', 'V26', 'V27', 'V28', 'Amount']
+
 # --- 1. Load Model and Scaler ---
 try:
     model = joblib.load('random_forest_model.joblib')
@@ -23,14 +28,13 @@ def predict_fraud_with_cost_analysis(*args):
     if model is None or scaler is None:
         return "Model not loaded.", ""
 
-    feature_names = ['Time', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10',
-                     'V11', 'V12', 'V13', 'V14', 'V15', 'V16', 'V17', 'V18', 'V19', 'V20',
-                     'V21', 'V22', 'V23', 'V24', 'V25', 'V26', 'V27', 'V28', 'Amount']
+    # Handle potential None inputs from empty fields, default them to 0
+    feature_args = [0 if val is None else val for val in feature_args]
     
-    input_dict = dict(zip(feature_names, feature_args))
+    input_dict = dict(zip(FEATURE_NAMES, feature_args))
     input_data = pd.DataFrame([input_dict])
     
-    transaction_amount = input_dict['Amount'] # Get original amount for cost analysis
+    transaction_amount = input_dict.get('Amount', 0) # Get original amount for cost analysis
 
     # --- Preprocessing ---
     input_data_scaled = input_data.copy()
@@ -49,7 +53,7 @@ def predict_fraud_with_cost_analysis(*args):
     # --- UNIQUE FEATURE: Cost-Benefit Analysis ---
     prob_legit = 1 - probability_fraud
     cost_of_flagging = prob_legit * cost_fp
-    cost_of_not_flagging = probability_fraud * transaction_amount
+    cost_of_not_flagging = probability_fraud * transaction_amount if transaction_amount > 0 else 0
 
     recommendation = "Flag Transaction" if cost_of_flagging < cost_of_not_flagging else "Do Not Flag"
     
@@ -68,7 +72,7 @@ def predict_fraud_with_cost_analysis(*args):
     
     return prediction_text, analysis_text
 
-# --- Utility functions (Unchanged) ---
+# --- Utility functions ---
 def process_file(file):
     if file is not None:
         try:
@@ -82,16 +86,23 @@ def process_file(file):
 
 def get_random_sample(df, fraud_class):
     if df is None:
-        return [0] * 30 + ["Please upload the CSV first."]
+        # Return disabled button state if no file is uploaded
+        return [0.0] * 30 + ["Please upload the CSV first."] + [gr.Button(interactive=False)]
     
     sample_df = df[df['Class'] == fraud_class]
     if not sample_df.empty:
         random_row = sample_df.sample(1).iloc[0]
         expected_outcome = "FRAUDULENT" if random_row['Class'] == 1 else "Legitimate"
         feature_values = random_row.drop('Class').tolist()
-        return feature_values + [expected_outcome]
+        # Return feature values, outcome, and an ENABLED button
+        return feature_values + [expected_outcome] + [gr.Button(interactive=True)]
     else:
-        return [0] * 30 + [f"No samples of class {fraud_class} found in the uploaded file."]
+        return [0.0] * 30 + [f"No samples of class {fraud_class} found."] + [gr.Button(interactive=False)]
+
+def clear_inputs():
+    # Return 30 zeros, an outcome string, and a DISABLED button
+    return [0.0] * 30 + ["N/A (Inputs Cleared)"] + [gr.Button(interactive=False)]
+
 
 # --- 3. Gradio UI with Cost Analysis ---
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
@@ -106,27 +117,13 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     with gr.Row():
         get_legit_button = gr.Button("Get Random Legitimate Transaction", variant="secondary")
         get_fraud_button = gr.Button("Get Random Fraudulent Transaction", variant="secondary")
+        clear_button = gr.Button("Clear Inputs", variant="stop")
     
     with gr.Row():
         with gr.Column(scale=3):
-            feature_inputs = [
-                gr.Number(label="Time", interactive=True),
-                gr.Number(label="V1", interactive=True), gr.Number(label="V2", interactive=True),
-                gr.Number(label="V3", interactive=True), gr.Number(label="V4", interactive=True),
-                gr.Number(label="V5", interactive=True), gr.Number(label="V6", interactive=True),
-                gr.Number(label="V7", interactive=True), gr.Number(label="V8", interactive=True),
-                gr.Number(label="V9", interactive=True), gr.Number(label="V10", interactive=True),
-                gr.Number(label="V11", interactive=True), gr.Number(label="V12", interactive=True),
-                gr.Number(label="V13", interactive=True), gr.Number(label="V14", interactive=True),
-                gr.Number(label="V15", interactive=True), gr.Number(label="V16", interactive=True),
-                gr.Number(label="V17", interactive=True), gr.Number(label="V18", interactive=True),
-                gr.Number(label="V19", interactive=True), gr.Number(label="V20", interactive=True),
-                gr.Number(label="V21", interactive=True), gr.Number(label="V22", interactive=True),
-                gr.Number(label="V23", interactive=True), gr.Number(label="V24", interactive=True),
-                gr.Number(label="V25", interactive=True), gr.Number(label="V26", interactive=True),
-                gr.Number(label="V27", interactive=True), gr.Number(label="V28", interactive=True),
-                gr.Number(label="Amount", interactive=True)
-            ]
+            # Create a list of Gradio Number components with a default value of 0
+            feature_inputs = [gr.Number(label=name, value=0.0, interactive=True) for name in FEATURE_NAMES]
+            
         with gr.Column(scale=1):
             cost_fp_input = gr.Number(label="Cost of a False Positive ($)", value=5, info="Cost to investigate a wrongly flagged transaction.")
             
@@ -135,10 +132,10 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                 label="Prediction Threshold",
                 info="Adjust the sensitivity. Lower threshold = more fraud flags."
             )
-            predict_button = gr.Button("Analyze Transaction", variant="primary")
-            expected_output = gr.Textbox(label="Expected Outcome")
-
-            # --- THE FIX IS HERE: Outputs are now inside the right-hand column ---
+            # Analyze button is now disabled by default
+            predict_button = gr.Button("Analyze Transaction", variant="primary", interactive=False)
+            expected_output = gr.Textbox(label="Expected Outcome", value="N/A (Default Values)")
+            
             model_output = gr.Markdown(label="Model Prediction")
             analysis_output = gr.Markdown(label="Cost-Benefit Analysis")
 
@@ -148,13 +145,19 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     get_legit_button.click(
         fn=get_random_sample,
         inputs=[stored_df, gr.Number(0, visible=False)],
-        outputs=feature_inputs + [expected_output]
+        outputs=feature_inputs + [expected_output, predict_button]
     )
     
     get_fraud_button.click(
         fn=get_random_sample, 
         inputs=[stored_df, gr.Number(1, visible=False)],
-        outputs=feature_inputs + [expected_output]
+        outputs=feature_inputs + [expected_output, predict_button]
+    )
+
+    clear_button.click(
+        fn=clear_inputs,
+        inputs=None,
+        outputs=feature_inputs + [expected_output, predict_button]
     )
 
     predict_button.click(
@@ -165,3 +168,4 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
 
 if __name__ == "__main__":
     demo.launch()
+
